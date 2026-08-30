@@ -53,6 +53,39 @@ back to the LLM)."
                  (gptel--sum-plists (plist-get info :tokens-full)
                                     tokens)))))
 
+(defun gptel-ollama--sanitize-call-spec (function-spec)
+  "Build a normalized call-spec from a raw tool-call FUNCTION-SPEC.
+Ollama proxies and models sometimes emit degenerate tool_call
+entries: :function missing entirely, :function a raw string
+instead of a plist, :name missing or not a string (e.g. the whole
+call text stuffed into the name field, or a JSON type-inferred
+value).  These shapes crash gptel downstream -- plist-put on a
+string signals inside the process filter, and a non-string name
+crashes `gptel--update-tool-call' -- leaving the request FSM
+stuck and the session hung.
+
+This function accepts any shape and returns a well-formed call
+spec plist with string :name and plist :args.  Degenerate entries
+become (:name \"malformed_tool_call\" :args nil), which matches
+no registered tool and flows into gptel's existing unknown-tool
+path: the model receives an error result naming the failure and
+can retry, instead of the request dying silently."
+  (let* ((spec (if (plistp function-spec)
+                   (copy-sequence function-spec)
+                 nil))
+         (name (plist-get spec :name))
+         (args (or (plist-get spec :arguments) (plist-get spec :args))))
+    (cond
+     ;; Well-formed: string name, any args
+     ((stringp name)
+      (progn
+        (plist-put spec :args (if (plistp args) args nil))
+        (plist-put spec :arguments nil)
+        spec))
+     ;; Degenerate: no usable name
+     (t
+      (list :name "malformed_tool_call" :args nil)))))
+
 (cl-defmethod gptel-curl--parse-stream ((_backend gptel-ollama) info)
   "Parse response stream for the Ollama API."
   (when (and (bobp) (re-search-forward "^{" nil t))
@@ -74,10 +107,8 @@ back to the LLM)."
                `(:role "assistant" :content :null :tool_calls ,(vconcat tool-calls)))
               (cl-loop
                for tool-call across tool-calls ;replace ":arguments" with ":args"
-               for call-spec = (copy-sequence (plist-get tool-call :function))
-               do (plist-put call-spec :args
-                             (plist-get call-spec :arguments))
-               (plist-put call-spec :arguments nil)
+               for call-spec = (gptel-ollama--sanitize-call-spec
+                                (plist-get tool-call :function))
                collect call-spec into tool-use
                finally
                (plist-put info :tool-use
@@ -114,10 +145,8 @@ Store response metadata in state INFO."
       ;; Then capture the tool call data for running the tool
       (cl-loop
        for tool-call across tool-calls  ;replace ":arguments" with ":args"
-       for call-spec = (copy-sequence (plist-get tool-call :function))
-       do (plist-put call-spec :args
-                     (plist-get call-spec :arguments))
-       (plist-put call-spec :arguments nil)
+       for call-spec = (gptel-ollama--sanitize-call-spec
+                        (plist-get tool-call :function))
        collect call-spec into tool-use
        finally (plist-put info :tool-use tool-use)))
     (when (and content (not (or (eq content :null) (string-empty-p content))))

@@ -1630,7 +1630,13 @@ Perform UI updates and run post-response hooks."
     (when gptel-mode
       (if-let* ((info (gptel-fsm-info fsm))
                 (names (cl-loop for call in (plist-get info :tool-use)
-                                collect (plist-get call :name))))
+                                for name = (plist-get call :name)
+                                when (stringp name)
+                                collect name
+                                ;; Non-string names (degenerate tool-call
+                                ;; entries from proxies/backends) must not
+                                ;; crash the process filter here.
+                                else collect "malformed_tool_call")))
           (gptel--update-status
            (concat
             (propertize
