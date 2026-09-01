@@ -121,6 +121,13 @@ can retry, instead of the request dying silently."
                   (plist-put info :reasoning-block t)
                 (plist-put info :reasoning-block nil)))
             (unless (eq done :json-false)
+              ;; Capture the terminal done_reason (stop, length, load,
+              ;; error) so a truncated generation (num_predict hit) is
+              ;; distinguishable from a complete stop.  Mirrors the
+              ;; non-streaming path (gptel--parse-response), which
+              ;; already stores :done_reason in :stop-reason.
+              (when-let* ((reason (map-elt content :done_reason)))
+                (plist-put info :stop-reason reason))
               (gptel--ollama-update-tokens content info)
               (goto-char (point-max)))))
       (error (goto-char pt)))
