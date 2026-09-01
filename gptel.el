@@ -2184,8 +2184,9 @@ for tool call results.  INFO contains the state of the request."
          with include-names =
          (mapcar #'gptel-tool-name
                  (cl-remove-if-not #'gptel-tool-include (plist-get info :tools)))
-         if (or (memq gptel-include-tool-results '(t call))
-                (member (gptel-tool-name tool) include-names))
+         if (and (gptel-tool-p tool)
+                 (or (memq gptel-include-tool-results '(t call))
+                     (member (gptel-tool-name tool) include-names)))
          do (funcall
              (plist-get info :callback)
              (let* ((name (gptel-tool-name tool))
