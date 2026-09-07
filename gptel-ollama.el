@@ -269,7 +269,7 @@ for details.  This implementation handles the Ollama API."
              (list :role (if role "user" "assistant") :content text))))
 
 (cl-defmethod gptel--parse-buffer ((backend gptel-ollama) &optional max-entries)
-  (let ((prompts) (prev-pt (point)))
+  (let ((prompts) (prev-pt (point)) (last-role nil))
     (if (or gptel-mode gptel-track-response)
         (while (and (or (not max-entries) (>= max-entries 0))
                     (goto-char (previous-single-property-change
@@ -279,7 +279,8 @@ for details.  This implementation handles the Ollama API."
             ('response
              (when-let* ((content (gptel--trim-prefixes
                                    (buffer-substring-no-properties (point) prev-pt))))
-               (push (list :role "assistant" :content content) prompts)))
+               (push (list :role "assistant" :content content) prompts))
+             (setq last-role 'assistant))
             (`(tool . ,_id)
              (save-excursion
                (condition-case nil
@@ -297,17 +298,39 @@ for details.  This implementation handles the Ollama API."
                            prompts))
                  ((end-of-file invalid-read-syntax)
                   (message (format "Could not parse tool-call on line %s"
-                                   (line-number-at-pos (point))))))))
-            ('ignore)
+                                   (line-number-at-pos (point)))))))
+             (setq last-role 'assistant))
+            ('ignore
+             ;; A reasoning block (gptel 'ignore) whose NEWER neighbor is
+             ;; NOT an assistant response is a THINKING-ONLY turn truncated
+             ;; at the output cap (num_predict / stop=length): the model's
+             ;; own turn vanished from the messages array (invisible-turn
+             ;; mechanism, c4/c6), so it re-derived the same analysis every
+             ;; turn -- the structural loop behind three lost cycles.
+             ;; Synthesize a stub assistant message so the model can see its
+             ;; work was cut off instead of re-deriving it.  LAST-ROLE is the
+             ;; role of the last non-empty region (empty separators between
+             ;; blocks do not reset it): 'assistant means a real response
+             ;; followed the reasoning; anything else (a user/continue
+             ;; message) means the reasoning was the turn's only output.
+             (when (and (not (eq last-role 'assistant))
+                        (string-match-p
+                         "\\(```[[:space:]]*reasoning\\|#\\+begin_reasoning\\)"
+                         (buffer-substring-no-properties (point) prev-pt)))
+               (push (list :role "assistant"
+                           :content "[thinking truncated at output cap -- your last turn's reasoning was cut off; land or continue concisely]")
+                     prompts)))
             ('nil
              (if gptel-track-media
                  (when-let* ((content (gptel--ollama-parse-multipart
                                        (gptel--parse-media-links major-mode (point) prev-pt))))
                    (when (> (length content) 0)
-                     (push (append '(:role "user") content) prompts)))
+                     (push (append '(:role "user") content) prompts)
+                     (setq last-role 'user)))
                (when-let* ((content (gptel--trim-prefixes (buffer-substring-no-properties
                                                            (point) prev-pt))))
-                 (push (list :role "user" :content content) prompts)))))
+                 (push (list :role "user" :content content) prompts)
+                 (setq last-role 'user)))))
           (setq prev-pt (point))
           (and max-entries (cl-decf max-entries)))
       (let ((content (string-trim (buffer-substring-no-properties
