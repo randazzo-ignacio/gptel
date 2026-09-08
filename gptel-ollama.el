@@ -38,8 +38,7 @@
                             (:include gptel-backend)))
 
 (defun gptel--ollama-update-tokens (usage info)
-  "Update token usage information from USAGE.
-USAGE is part of the response, INFO is the request plist.
+  "Update token usage in INFO from USAGE.
 
 This function accumulates token counts across multiple turns in a
 multi-turn request (e.g., during tool use where results are fed
@@ -87,7 +86,7 @@ can retry, instead of the request dying silently."
       (list :name "malformed_tool_call" :args nil)))))
 
 (cl-defmethod gptel-curl--parse-stream ((_backend gptel-ollama) info)
-  "Parse response stream for the Ollama API."
+  "Parse response stream for the Ollama API, storing state in INFO."
   (when (and (bobp) (re-search-forward "^{" nil t))
     (forward-line 0))
   (let* ((content-strs) (content) (pt (point)))
@@ -160,7 +159,7 @@ Store response metadata in state INFO."
       content)))
 
 (cl-defmethod gptel--request-data ((backend gptel-ollama) prompts)
-  "JSON encode PROMPTS for sending to Ollama."
+  "JSON encode PROMPTS for sending to Ollama with BACKEND."
   (when gptel-system-prompt
     (push (list :role "system"
                 :content gptel-system-prompt)
@@ -244,6 +243,7 @@ for details.  This implementation handles the Ollama API."
              (truncate-string-to-width (prin1-to-string new-call) 50 nil nil t)))))
 
 (cl-defmethod gptel--parse-list ((backend gptel-ollama) prompt-list)
+  "Parse PROMPT-LIST into a list of messages for BACKEND."
   (if (consp (car prompt-list))
       (let ((full-prompt))              ; Advanced format, list of lists
         (dolist (entry prompt-list)
@@ -269,6 +269,8 @@ for details.  This implementation handles the Ollama API."
              (list :role (if role "user" "assistant") :content text))))
 
 (cl-defmethod gptel--parse-buffer ((backend gptel-ollama) &optional max-entries)
+  "Parse the current buffer into a list of messages for BACKEND.
+Include up to MAX-ENTRIES queries/responses."
   (let ((prompts) (prev-pt (point)) (last-role nil))
     (if (or gptel-mode gptel-track-response)
         (while (and (or (not max-entries) (>= max-entries 0))

@@ -31,7 +31,7 @@
 (require 'cl-lib)
 (require 'project)
 
-(declare-function gptel-menu "gptel-transient")
+(declare-function gptel-menu "gptel-transient" nil t)
 (declare-function dired-get-marked-files "dired")
 (declare-function ibuffer-get-marked-buffers "ibuffer")
 (declare-function ibuffer-current-buffer "ibuffer")
@@ -415,6 +415,8 @@ This modifies the buffer."
                 (setq gptel-system-prompt
                       (concat context-string "\n\n" gptel-system-prompt)))
                (function
+                ;; FIXME: This parses the directive in the prompt construction
+                ;; buffer, which is wrong.  Wrap in a function instead.
                 (setq gptel-system-prompt
                       (gptel--parse-directive gptel-system-prompt 'raw))
                 (gptel-context--wrap-in-buffer context-string))
